@@ -83,6 +83,9 @@ try:
         create_nanomamba_matched_dualpcen_v2_ssmv2,
         create_nanomamba_tiny_tripcen_v2_ssmv2,
         create_nanomamba_matched_tripcen_v2_ssmv2,
+        # Complete model: v2 + SSMv2 + Integrated Spectral Enhancement
+        create_nanomamba_tiny_dualpcen_v2_ssmv2_se,
+        create_nanomamba_matched_dualpcen_v2_ssmv2_se,
     )
     print("  [OK] nanomamba.py loaded successfully")
 except ImportError:
@@ -1343,10 +1346,14 @@ def run_noise_evaluation(models_dict, val_loader, device,
     for model_name, model in models_dict.items():
         model.eval()
         is_cnn = _is_cnn_model(model_name)
+        # Skip external SS if model has built-in SpectralEnhancer
+        has_builtin_se = getattr(model, 'use_spectral_enhancer', False)
+        _use_enhancer = use_enhancer and not has_builtin_se
+        se_tag = " [built-in SE]" if has_builtin_se else ""
         results[model_name] = {}
         print(f"\n  Evaluating: {model_name}" +
-              (" [CNN: mel input]" if is_cnn else " [SSM: raw audio]"),
-              flush=True)
+              (" [CNN: mel input]" if is_cnn else " [SSM: raw audio]") +
+              se_tag, flush=True)
 
         for noise_type in noise_types:
             results[model_name][noise_type] = {}
@@ -1360,7 +1367,7 @@ def run_noise_evaluation(models_dict, val_loader, device,
                     acc = evaluate_noisy(
                         model, val_loader, device, noise_type, snr,
                         dataset_audios=dataset_audios,
-                        use_enhancer=use_enhancer,
+                        use_enhancer=_use_enhancer,
                         enhancer_type=enhancer_type,
                         gtcrn_model=gtcrn_model,
                         enhancer_bypass=enhancer_bypass,
@@ -1727,8 +1734,12 @@ def run_calibrated_evaluation(models_dict, val_loader, device,
     for model_name, model in models_dict.items():
         model.eval()
         is_cnn = _is_cnn_model(model_name)
+        # Skip external SS if model has built-in SpectralEnhancer
+        has_builtin_se = getattr(model, 'use_spectral_enhancer', False)
+        _use_enhancer = use_enhancer and not has_builtin_se
+        se_tag = ", built-in SE" if has_builtin_se else ""
         results[model_name] = {}
-        tag = "[CNN: mel, no calibration]" if is_cnn else "[SSM: raw, calibrated]"
+        tag = f"[CNN: mel, no calibration]" if is_cnn else f"[SSM: raw, calibrated{se_tag}]"
         print(f"\n  Evaluating: {model_name} {tag}", flush=True)
 
         for noise_type in noise_types:
@@ -1756,7 +1767,7 @@ def run_calibrated_evaluation(models_dict, val_loader, device,
                     acc = evaluate_noisy(
                         model, val_loader, device, noise_type, snr,
                         dataset_audios=dataset_audios,
-                        use_enhancer=use_enhancer,
+                        use_enhancer=_use_enhancer,
                         enhancer_type=enhancer_type,
                         gtcrn_model=gtcrn_model,
                         enhancer_bypass=enhancer_bypass,
@@ -2095,6 +2106,9 @@ MODEL_REGISTRY = {
     'NanoMamba-Matched-DualPCEN-v2-SSMv2': create_nanomamba_matched_dualpcen_v2_ssmv2,
     'NanoMamba-Tiny-TriPCEN-v2-SSMv2': create_nanomamba_tiny_tripcen_v2_ssmv2,
     'NanoMamba-Matched-TriPCEN-v2-SSMv2': create_nanomamba_matched_tripcen_v2_ssmv2,
+    # Complete model: v2 + SSMv2 + Integrated Spectral Enhancement (0 extra params)
+    'NanoMamba-Tiny-SE': create_nanomamba_tiny_dualpcen_v2_ssmv2_se,
+    'NanoMamba-Matched-SE': create_nanomamba_matched_dualpcen_v2_ssmv2_se,
     'DS-CNN-S': lambda n=12: DSCNN_S(n_classes=n),
     'BC-ResNet-1': lambda n=12: BCResNet(n_classes=n, scale=1),
 }
