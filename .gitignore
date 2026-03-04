@@ -1,0 +1,50 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# === Data & Checkpoints ===
+data/
+*.onnx
+*.pth
+checkpoints/
+*.pt
+!checkpoints_full/**/*.pt
+
+# === Results (generated outputs) ===
+*.png
+*.pdf
+results/
+
+# === Paper & Patent (NEVER push) ===
+paper/
+patent/
+
+# === IDE & AI ===
+.vscode/
+.idea/
+.claude/
+*.swp
+*.code-workspace
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === Jupyter ===
+.ipynb_checkpoints/
+
+# === RTL build artifacts ===
+rtl/build/
+rtl/sim/*.vvp
+rtl/sim/*.vcd
+
+# === Misc ===
+_verify*.py
+*.log
+nul

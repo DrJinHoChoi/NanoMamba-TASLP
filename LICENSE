@@ -1,0 +1,56 @@
+NanoMamba — Dual License
+
+Copyright (c) 2026 Jin Ho Choi. All rights reserved.
+
+
+1. ACADEMIC & RESEARCH USE (Free)
+
+   Permission is hereby granted, free of charge, to any person or
+   organization obtaining a copy of this software and associated
+   documentation files (the "Software") for academic, research, or
+   personal non-commercial purposes, to use, copy, modify, and
+   distribute the Software, subject to the following conditions:
+
+   (a) Attribution: Any publication or presentation using this Software
+       must cite the following paper:
+
+       J. H. Choi, "NanoMamba: Noise-Robust Ultra-Compact Keyword Spotting
+       via Dual-Expert Normalization and Adaptive State Space Dynamics,"
+       IEEE/ACM Trans. Audio, Speech, Lang. Process., 2026.
+
+   (b) This copyright notice and license shall be included in all copies
+       or substantial portions of the Software.
+
+   (c) No commercial use is permitted without a separate commercial license.
+
+
+2. COMMERCIAL USE (License Required)
+
+   Commercial use of the Software — including but not limited to:
+   product integration, embedding in commercial hardware or firmware,
+   SaaS or cloud service deployment, sale or distribution of derivative
+   works, or use in any revenue-generating product or service — requires
+   a separate written commercial license agreement.
+
+   For commercial licensing inquiries, contact:
+
+       Jin Ho Choi
+       Email: jinhochoi@smartear.co.kr
+
+
+3. PATENT NOTICE
+
+   This Software implements methods that are the subject of pending
+   patent application(s). Commercial use may require a patent license
+   in addition to the software license. Contact the author for details.
+
+
+4. DISCLAIMER OF WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+   IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+   CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+   TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
