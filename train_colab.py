@@ -2177,7 +2177,7 @@ def _adjust_bn_momentum(model, momentum):
 
 def train_model(model, model_name, train_dataset, val_dataset,
                 checkpoint_dir, device, epochs=30, batch_size=128, lr=3e-3,
-                noise_aug=False, noise_ratio=0.5):
+                noise_aug=False, noise_ratio=0.5, noise_curriculum_v2=False):
     """Full training loop with Per-Sample Multi-Condition Noise Augmentation.
 
     [NOVEL] Per-Sample Multi-Condition Training reveals structural differences:
@@ -2279,7 +2279,7 @@ def train_model(model, model_name, train_dataset, val_dataset,
             noise_aug=noise_aug, noise_ratio=noise_ratio,
             is_cnn=is_cnn, dataset_audios=dataset_audios,
             mel_fb=mel_fb, total_epochs=epochs,
-            noise_curriculum_v2=getattr(args, 'noise_curriculum_v2', False))
+            noise_curriculum_v2=noise_curriculum_v2)
 
         # Evaluate on CLEAN val set (always clean, fair comparison)
         if is_cnn:
@@ -2493,7 +2493,8 @@ def main():
                 model, model_name, train_dataset, val_dataset,
                 args.checkpoint_dir, device,
                 epochs=args.epochs, batch_size=args.batch_size, lr=args.lr,
-                noise_aug=args.noise_aug, noise_ratio=args.noise_ratio)
+                noise_aug=args.noise_aug, noise_ratio=args.noise_ratio,
+                noise_curriculum_v2=args.noise_curriculum_v2)
 
         trained_models[model_name] = model
 
