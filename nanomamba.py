@@ -1340,6 +1340,306 @@ class SpectralAwareSSM_v2(nn.Module):
 
 
 # ============================================================================
+# Frequency-Interleaved Mamba (FI-Mamba)
+# ============================================================================
+
+class FrequencySSM(nn.Module):
+    """Standard Selective SSM for frequency-axis scanning.
+
+    Scans across mel bins (low → high frequency) to capture cross-band
+    patterns: harmonic structure (speech) vs flat spectrum (noise).
+    No SNR modulation — frequency patterns are noise-informative by nature.
+    """
+
+    def __init__(self, d_inner, d_state):
+        super().__init__()
+        self.d_inner = d_inner
+        self.d_state = d_state
+
+        # Projections: x → (dt_raw, B, C)
+        self.x_proj = nn.Linear(d_inner, d_state * 2 + 1, bias=False)
+        self.dt_proj = nn.Linear(1, d_inner, bias=True)
+
+        # HiPPO-initialized A
+        A = torch.arange(1, d_state + 1, dtype=torch.float32) + 0.5
+        self.A_log = nn.Parameter(
+            torch.log(A).unsqueeze(0).expand(d_inner, -1).clone())
+        self.D = nn.Parameter(torch.ones(d_inner))
+
+    def forward(self, x):
+        """
+        Args:
+            x: (B, L, d_inner) — L = n_mels (frequency axis)
+        Returns:
+            y: (B, L, d_inner)
+        """
+        B, L, D = x.shape
+        N = self.d_state
+
+        x_proj = self.x_proj(x)
+        dt_raw = x_proj[..., :1]
+        B_param = x_proj[..., 1:N + 1]
+        C_param = x_proj[..., N + 1:]
+
+        delta = F.softplus(self.dt_proj(dt_raw)) + 0.1
+
+        A = -torch.exp(self.A_log)
+        dA = torch.exp(A.unsqueeze(0).unsqueeze(0) * delta.unsqueeze(-1))
+        dB = delta.unsqueeze(-1) * B_param.unsqueeze(2)
+        dBx = dB * x.unsqueeze(-1)
+
+        y = torch.zeros_like(x)
+        h = torch.zeros(B, D, N, device=x.device)
+
+        for t in range(L):
+            h = dA[:, t] * h + dBx[:, t]
+            y[:, t] = (h * C_param[:, t].unsqueeze(1)).sum(-1) + self.D * x[:, t]
+
+        return y
+
+
+class SpectralMambaBlock(nn.Module):
+    """Mamba block scanning along the FREQUENCY axis.
+
+    Processes mel spectrogram frame-by-frame: each time frame's n_mels
+    mel energies form a length-n_mels sequence scanned by a selective SSM.
+
+    This replaces CNN's 2D convolution for cross-frequency pattern detection
+    using the SSM paradigm:
+      - Harmonic structure (evenly spaced peaks) → speech
+      - Flat spectrum → broadband noise (white, pink)
+      - Low-freq concentration → factory hum
+      - Speech-like but irregular → babble
+
+    The conv1d (kernel=3) captures local frequency context (3 adjacent mel
+    bins), while the SSM captures long-range frequency dependencies
+    (harmonics spanning the full spectrum).
+    """
+
+    def __init__(self, d_model, d_state=3, d_conv=3, expand=1.5, n_mels=40):
+        super().__init__()
+        self.d_model = d_model
+        self.n_mels = n_mels
+        self.d_inner = int(d_model * expand)
+
+        # Embed scalar mel energy → d_model
+        self.mel_embed = nn.Linear(1, d_model)
+
+        # Standard Mamba block (no SNR projection)
+        self.norm = nn.LayerNorm(d_model)
+        self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
+        self.conv1d = nn.Conv1d(
+            self.d_inner, self.d_inner,
+            kernel_size=d_conv, padding=d_conv - 1,
+            groups=self.d_inner)
+        self.freq_ssm = FrequencySSM(self.d_inner, d_state)
+        self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
+
+        # Deembed back to 1D
+        self.mel_deembed = nn.Linear(d_model, 1)
+
+    def forward(self, mel):
+        """
+        Args:
+            mel: (B, n_mels, T) normalized log-mel spectrogram
+        Returns:
+            out: (B, n_mels, T) spectrally-enhanced mel (with residual)
+        """
+        Bs, Fm, Tm = mel.shape
+
+        # Reshape: (B, F, T) → (B*T, F, 1) — process each frame independently
+        x = mel.permute(0, 2, 1).reshape(Bs * Tm, Fm, 1)
+
+        # Embed scalar → d_model
+        x = self.mel_embed(x)  # (B*T, F, d_model)
+
+        # Mamba block with residual
+        residual = x
+        x = self.norm(x)
+        xz = self.in_proj(x)
+        x_branch, z = xz.chunk(2, dim=-1)
+
+        # Local frequency context (3 adjacent mel bins)
+        x_branch = x_branch.transpose(1, 2)  # (B*T, d_inner, F)
+        x_branch = self.conv1d(x_branch)[:, :, :Fm]
+        x_branch = x_branch.transpose(1, 2)
+        x_branch = F.silu(x_branch)
+
+        # Frequency SSM: scan low→high frequency
+        y = self.freq_ssm(x_branch)
+
+        # Gate + output projection + residual
+        y = y * F.silu(z)
+        y = self.out_proj(y) + residual  # (B*T, F, d_model)
+
+        # Deembed to scalar + reshape
+        out = self.mel_deembed(y).squeeze(-1)  # (B*T, F)
+        out = out.reshape(Bs, Tm, Fm).permute(0, 2, 1)  # (B, F, T)
+
+        return mel + out  # Residual: original mel + spectral correction
+
+
+class FIMamba(nn.Module):
+    """Frequency-Interleaved Mamba for Noise-Robust Keyword Spotting.
+
+    Central thesis: SSMs fail under noise because they collapse the frequency
+    axis (via patch projection) before temporal modeling, losing cross-frequency
+    pattern information that CNNs capture with 2D convolution.
+
+    FI-Mamba solves this by adding a spectral scanning layer BEFORE projection,
+    giving the model native cross-frequency awareness within the SSM paradigm.
+
+    Architecture:
+      Audio → STFT → SNR Est → Mel → log → InstanceNorm
+            → **SpectralMamba (frequency axis)** ← NEW: cross-band pattern detection
+            → PatchProj → Temporal SA-SSM (time axis) × N → Classifier
+
+    The spectral Mamba replaces ALL hand-designed frequency processing:
+      - Wiener gain / spectral subtraction → learned frequency-domain filtering
+      - PCEN / DualPCEN → learned adaptive normalization across bands
+      - TinyConv2D → learned cross-frequency pattern detection
+    All with a single SSM mechanism applied to the frequency axis.
+
+    Paper: "Frequency-Interleaved Mamba: Native Cross-Frequency Awareness
+           for Noise-Robust Keyword Spotting" (IEEE/ACM TASLP)
+    """
+
+    def __init__(self, n_mels=40, n_classes=12,
+                 d_model=18, d_state_t=4, d_state_f=3,
+                 d_conv=3, expand=1.5,
+                 n_temporal_layers=2,
+                 sr=16000, n_fft=512, hop_length=160):
+        super().__init__()
+        self.n_mels = n_mels
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.d_model = d_model
+        n_freq = n_fft // 2 + 1
+
+        # 1. SNR Estimator (for Temporal SA-SSM blocks)
+        self.snr_estimator = SNREstimator(n_freq=n_freq, use_running_ema=False)
+
+        # 2. Mel filterbank (fixed, not learnable)
+        mel_fb = self._create_mel_fb(sr, n_fft, n_mels)
+        self.register_buffer('mel_fb', torch.from_numpy(mel_fb))
+
+        # 3. Instance normalization (before spectral processing)
+        self.input_norm = nn.InstanceNorm1d(n_mels)
+
+        # 4. Spectral Mamba: frequency-axis scanning
+        #    Learns cross-band patterns: harmonics (speech) vs flat (noise)
+        self.spectral_block = SpectralMambaBlock(
+            d_model=d_model, d_state=d_state_f,
+            d_conv=d_conv, expand=expand, n_mels=n_mels)
+
+        # 5. Patch projection: n_mels → d_model
+        self.patch_proj = nn.Linear(n_mels, d_model)
+
+        # 6. Temporal SA-SSM blocks: time-axis scanning with SNR awareness
+        self.blocks = nn.ModuleList([
+            NanoMambaBlock(
+                d_model=d_model,
+                d_state=d_state_t,
+                d_conv=d_conv,
+                expand=expand,
+                n_mels=n_mels,
+                ssm_mode='full',
+                use_ssm_v2=True)
+            for _ in range(n_temporal_layers)
+        ])
+
+        # 7. Final norm + classifier
+        self.final_norm = nn.LayerNorm(d_model)
+        self.classifier = nn.Linear(d_model, n_classes)
+
+    @staticmethod
+    def _create_mel_fb(sr, n_fft, n_mels):
+        """Create mel filterbank."""
+        n_freq = n_fft // 2 + 1
+        mel_low = 0
+        mel_high = 2595 * np.log10(1 + sr / 2 / 700)
+        mel_points = np.linspace(mel_low, mel_high, n_mels + 2)
+        hz_points = 700 * (10 ** (mel_points / 2595) - 1)
+        bin_points = np.floor((n_fft + 1) * hz_points / sr).astype(int)
+        fb = np.zeros((n_mels, n_freq), dtype=np.float32)
+        for i in range(n_mels):
+            for j in range(bin_points[i], bin_points[i + 1]):
+                if j < n_freq:
+                    fb[i, j] = (j - bin_points[i]) / max(
+                        bin_points[i + 1] - bin_points[i], 1)
+            for j in range(bin_points[i + 1], bin_points[i + 2]):
+                if j < n_freq:
+                    fb[i, j] = (bin_points[i + 2] - j) / max(
+                        bin_points[i + 2] - bin_points[i + 1], 1)
+        return fb
+
+    def forward(self, audio):
+        """
+        Args:
+            audio: (B, T) raw waveform at 16 kHz
+        Returns:
+            logits: (B, n_classes)
+        """
+        # STFT
+        window = torch.hann_window(self.n_fft, device=audio.device)
+        spec = torch.stft(audio, self.n_fft, self.hop_length,
+                          window=window, return_complex=True)
+        mag = spec.abs()
+
+        # SNR estimation (for temporal SA-SSM blocks)
+        snr_mel = self.snr_estimator(mag, self.mel_fb)
+
+        # Mel features + log compression + normalization
+        mel = torch.matmul(self.mel_fb, mag)
+        mel = torch.log(mel + 1e-8)
+        mel = self.input_norm(mel)  # (B, n_mels, T_frames)
+
+        # ---- SPECTRAL MAMBA: frequency-axis scanning ----
+        # Captures cross-band patterns before patch projection destroys them
+        mel = self.spectral_block(mel)  # (B, n_mels, T_frames)
+
+        # Patch projection
+        x = mel.transpose(1, 2)  # (B, T, n_mels)
+        snr = snr_mel.transpose(1, 2)  # (B, T, n_mels)
+        x = self.patch_proj(x)  # (B, T, d_model)
+
+        # ---- TEMPORAL SA-SSM: time-axis scanning with SNR ----
+        for block in self.blocks:
+            x = block(x, snr)
+
+        # Classify
+        x = self.final_norm(x)
+        x = x.mean(dim=1)  # Global average pooling
+        return self.classifier(x)
+
+    def set_calibration(self, profile='default', **kwargs):
+        """Runtime calibration for SA-SSM blocks."""
+        for block in self.blocks:
+            if hasattr(block.sa_ssm, 'set_calibration'):
+                block.sa_ssm.set_calibration(**kwargs)
+
+
+# Factory functions for FI-Mamba
+def create_fimamba_matched(n_classes=12):
+    """FI-Mamba matched to BC-ResNet-1 (~7,439 params).
+
+    Architecture: SpectralMamba(d=18,N=3) → SA-SSM(d=18,N=4) × 2
+    """
+    return FIMamba(
+        n_mels=40, n_classes=n_classes,
+        d_model=18, d_state_t=4, d_state_f=3,
+        d_conv=3, expand=1.5, n_temporal_layers=2)
+
+
+def create_fimamba_small(n_classes=12):
+    """FI-Mamba small variant (~5,000 params)."""
+    return FIMamba(
+        n_mels=40, n_classes=n_classes,
+        d_model=16, d_state_t=4, d_state_f=3,
+        d_conv=3, expand=1.5, n_temporal_layers=2)
+
+
+# ============================================================================
 # Integrated Spectral Enhancement (0 learnable parameters)
 # ============================================================================
 

@@ -86,6 +86,9 @@ try:
         # Complete model: v2 + SSMv2 + Integrated Spectral Enhancement
         create_nanomamba_tiny_dualpcen_v2_ssmv2_se,
         create_nanomamba_matched_dualpcen_v2_ssmv2_se,
+        # FI-Mamba: Frequency-Interleaved Mamba (spectral + temporal SSM)
+        create_fimamba_matched,
+        create_fimamba_small,
     )
     print("  [OK] nanomamba.py loaded successfully")
 except ImportError:
@@ -2109,6 +2112,9 @@ MODEL_REGISTRY = {
     # Complete model: v2 + SSMv2 + Integrated Spectral Enhancement (0 extra params)
     'NanoMamba-Tiny-SE': create_nanomamba_tiny_dualpcen_v2_ssmv2_se,
     'NanoMamba-Matched-SE': create_nanomamba_matched_dualpcen_v2_ssmv2_se,
+    # FI-Mamba: Frequency-Interleaved Mamba (unified spectral+temporal SSM)
+    'FI-Mamba': create_fimamba_matched,
+    'FI-Mamba-Small': create_fimamba_small,
     'DS-CNN-S': lambda n=12: DSCNN_S(n_classes=n),
     'BC-ResNet-1': lambda n=12: BCResNet(n_classes=n, scale=1),
 }
